@@ -1,6 +1,11 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <windows.h>
 #include <winternl.h>
+#include <fstream>
+#include <iostream>
+#include <ctype.h>
+#include "getPEB.h"
 
 PPEB getPeb()
 {
@@ -9,6 +14,25 @@ PPEB getPeb()
 #else
     return (PPEB)__readfsdword(0x30);
 #endif
+}
+
+wchar_t* convertCharArrayToLPCWSTR(const char* charArray)
+{
+    wchar_t* wString = new wchar_t[4096];
+    MultiByteToWideChar(CP_ACP, 0, charArray, -1, wString, 4096);
+    return wString;
+}
+
+// hash
+unsigned long DJB2hash(PWSTR functionName)
+{
+    unsigned long hash = 5381;
+    unsigned int size = wcslen(functionName);
+    unsigned int i = 0;
+    for (i = 0; i < size; i++) {
+        hash = ((hash << 5) + hash) + (functionName[i]);
+    }
+    return hash;
 }
 
 HMODULE getModuleHandleCustom(LPWSTR name)
@@ -39,38 +63,52 @@ HMODULE getModuleHandleCustom(LPWSTR name)
     return nullptr;
 }
 
-wchar_t* convertCharArrayToLPCWSTR(const char* charArray)
+PVOID getProcAddressCustom(PVOID dllAddress, DWORD functionHash)
 {
-    wchar_t* wString = new wchar_t[4096];
-    MultiByteToWideChar(CP_ACP, 0, charArray, -1, wString, 4096);
-    return wString;
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)dllAddress;
+    PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((PBYTE)dllAddress + dosHeader->e_lfanew);
+    PIMAGE_OPTIONAL_HEADER optionalHeader = &ntHeader->OptionalHeader;
+    PIMAGE_DATA_DIRECTORY dataDir = &optionalHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    PIMAGE_EXPORT_DIRECTORY exportDir = (PIMAGE_EXPORT_DIRECTORY)((PBYTE)dllAddress + dataDir->VirtualAddress);
+
+    PDWORD AddressOfFunctions = (PDWORD)((PBYTE)dllAddress + exportDir->AddressOfFunctions);
+    PDWORD AddressOfNames = (PDWORD)((PBYTE)dllAddress + exportDir->AddressOfNames);
+    PWORD AddressOfFunctionsOrdinals = (PWORD)((PBYTE)dllAddress + exportDir->AddressOfNameOrdinals);
+
+    //std::ofstream newHeader;
+    //newHeader.open("getPEB.h");
+    // Better with MemberOfFunctions
+    for (int i = 0; i < exportDir->NumberOfFunctions; ++i)
+    {
+        PCSTR name = (PSTR)((PBYTE)dllAddress + AddressOfNames[i]);
+
+        WORD ordinalName = (WORD)((PBYTE)dllAddress + AddressOfFunctionsOrdinals[i]);
+
+        PVOID addr = (PVOID)((PBYTE)dllAddress + AddressOfFunctions[ordinalName]);
+
+        //printf("%x\n", DJB2hash(convertCharArrayToLPCWSTR(name)));
+
+       //newHeader << "#define " << name << "_HASH " << "0x" << DJB2hash(convertCharArrayToLPCWSTR(name)) << std::hex << std::endl;
+       if (DJB2hash(convertCharArrayToLPCWSTR(name)) == functionHash)
+       {
+           return addr; 
+       }
+    }
+
+    //newHeader.close();
+
+    return nullptr;
 }
+
 
 int main()
 {
     LPWSTR nameNtdll = convertCharArrayToLPCWSTR("ntdll.dll");
-    HMODULE addressDll = getModuleHandleCustom(nameNtdll);
+    HMODULE NtDllAddress = getModuleHandleCustom(nameNtdll);
     //printf("Address : %x", addressDll);
 
-    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)addressDll;
-    PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((PBYTE)addressDll + dosHeader->e_lfanew);
-    PIMAGE_OPTIONAL_HEADER optionalHeader = &ntHeader->OptionalHeader;
-    PIMAGE_DATA_DIRECTORY dataDir = &optionalHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-    
-    PIMAGE_EXPORT_DIRECTORY exportDir = (PIMAGE_EXPORT_DIRECTORY)((PBYTE)addressDll + dataDir->VirtualAddress);
-
-    PDWORD AddressOfFunctions = (PDWORD)((PBYTE) addressDll + exportDir->AddressOfFunctions);
-    PDWORD AddressOfNames = (PDWORD)((PBYTE)addressDll + exportDir->AddressOfNames);
-    PWORD AddressOfFunctionsOrdinals = (PWORD)((PBYTE)addressDll + exportDir->AddressOfNameOrdinals);
-
-    for (int i = 0; i < exportDir->NumberOfFunctions; ++i)
-    {
-        PCSTR name = (PSTR)((PBYTE)addressDll + AddressOfNames[i]);
-
-        WORD ordinalName = (WORD)((PBYTE)addressDll + AddressOfFunctions[i]);
-        
-        PVOID addr = (PVOID)((PBYTE)addressDll + AddressOfFunctions[ordinalName]);
-
-        printf("%s : %p \n", name, addr);
-    }
+    //LPWSTR nametest = convertCharArrayToLPCWSTR("test");
+    PVOID functionAddress = getProcAddressCustom(NtDllAddress, NtAllocateVirtualMemory_HASH);
+    printf("address : %x", functionAddress);
+    //printf("%x", DJB2hash(nametest));
 }
