@@ -11,7 +11,7 @@ PPEB getPeb()
 #endif
 }
 
-HMODULE newGetModuleHandle(LPWSTR name)
+HMODULE getModuleHandleCustom(LPWSTR name)
 {
     // Get the PEB 
     PPEB peb = getPeb(); 
@@ -26,6 +26,7 @@ HMODULE newGetModuleHandle(LPWSTR name)
     PLIST_ENTRY ent = listEntry->Flink;
     // We are looping in the listEntry to get the address of the 
     do {
+        //
         PLDR_DATA_TABLE_ENTRY tableEnt = (PLDR_DATA_TABLE_ENTRY)((PBYTE)ent - 0x10);
         LPWSTR nameDll = (LPWSTR)*tableEnt->Reserved5;
         //printf("nameDll : %ws\n", nameDll);
@@ -47,8 +48,29 @@ wchar_t* convertCharArrayToLPCWSTR(const char* charArray)
 
 int main()
 {
-    LPWSTR nameKernel32 = convertCharArrayToLPCWSTR("KERNEL32.DLL");
-    HMODULE addressDll = newGetModuleHandle(nameKernel32);
+    LPWSTR nameNtdll = convertCharArrayToLPCWSTR("ntdll.dll");
+    HMODULE addressDll = getModuleHandleCustom(nameNtdll);
+    //printf("Address : %x", addressDll);
 
-    printf("Address : %x", addressDll);
+    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)addressDll;
+    PIMAGE_NT_HEADERS ntHeader = (PIMAGE_NT_HEADERS)((PBYTE)addressDll + dosHeader->e_lfanew);
+    PIMAGE_OPTIONAL_HEADER optionalHeader = &ntHeader->OptionalHeader;
+    PIMAGE_DATA_DIRECTORY dataDir = &optionalHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    
+    PIMAGE_EXPORT_DIRECTORY exportDir = (PIMAGE_EXPORT_DIRECTORY)((PBYTE)addressDll + dataDir->VirtualAddress);
+
+    PDWORD AddressOfFunctions = (PDWORD)((PBYTE) addressDll + exportDir->AddressOfFunctions);
+    PDWORD AddressOfNames = (PDWORD)((PBYTE)addressDll + exportDir->AddressOfNames);
+    PWORD AddressOfFunctionsOrdinals = (PWORD)((PBYTE)addressDll + exportDir->AddressOfNameOrdinals);
+
+    for (int i = 0; i < exportDir->NumberOfFunctions; ++i)
+    {
+        PCSTR name = (PSTR)((PBYTE)addressDll + AddressOfNames[i]);
+
+        WORD ordinalName = (WORD)((PBYTE)addressDll + AddressOfFunctions[i]);
+        
+        PVOID addr = (PVOID)((PBYTE)addressDll + AddressOfFunctions[ordinalName]);
+
+        printf("%s : %p \n", name, addr);
+    }
 }
